@@ -24,15 +24,13 @@ func getMachineID() string {
 		}
 		return ""
 	case "windows":
-		out, err := exec.Command("wmic", "baseboard", "get", "SerialNumber").Output()
+		// wmic 在 Win11 24H2 起已被移除，改用 CIM（Get-CimInstance）
+		out, err := exec.Command("powershell", "-NoProfile", "-Command",
+			"(Get-CimInstance Win32_BaseBoard).SerialNumber").Output()
 		if err != nil {
 			return ""
 		}
-		lines := strings.Fields(string(out))
-		if len(lines) >= 2 {
-			return lines[len(lines)-1]
-		}
-		return ""
+		return strings.TrimSpace(string(out))
 	default: // linux
 		out, err := exec.Command("cat", "/sys/class/dmi/id/board_serial").Output()
 		if err != nil {

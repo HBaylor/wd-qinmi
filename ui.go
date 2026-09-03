@@ -157,10 +157,11 @@ func (u *UI) buildPresetPanel() fyne.CanvasObject {
 		text  string
 	}{
 		{"ctrl_1", "Ctrl+1"},
-		{"enter", "Enter"},
 		{"ctrl_2", "Ctrl+2"},
-		{"ctrl_tab", "Ctrl+Tab"},
 		{"ctrl_3", "Ctrl+3"},
+		{"ctrl_tab", "Ctrl+Tab"},
+		{"alt_tab", "Alt+Tab"},
+		{"enter", "Enter"},
 		{"tab", "Tab"},
 	}
 

@@ -42,14 +42,16 @@ func newRealKeySimulator() (*realKeySimulator, error) {
 // 与 Python 端键盘模拟行为保持一致。
 var keyMap = map[string]struct {
 	ctrl bool
+	alt  bool
 	keys []int
 }{
 	"ctrl_1":   {ctrl: true, keys: []int{keybd_event.VK_1}},
 	"ctrl_2":   {ctrl: true, keys: []int{keybd_event.VK_2}},
 	"ctrl_3":   {ctrl: true, keys: []int{keybd_event.VK_3}},
-	"enter":    {ctrl: false, keys: []int{keybd_event.VK_ENTER}},
-	"tab":      {ctrl: false, keys: []int{keybd_event.VK_TAB}},
+	"enter":    {keys: []int{keybd_event.VK_ENTER}},
+	"tab":      {keys: []int{keybd_event.VK_TAB}},
 	"ctrl_tab": {ctrl: true, keys: []int{keybd_event.VK_TAB}},
+	"alt_tab":  {alt: true, keys: []int{keybd_event.VK_TAB}},
 	"ctrl_c":   {ctrl: true, keys: []int{keybd_event.VK_C}},
 	"ctrl_v":   {ctrl: true, keys: []int{keybd_event.VK_V}},
 	"ctrl_z":   {ctrl: true, keys: []int{keybd_event.VK_Z}},
@@ -68,6 +70,10 @@ func (s *realKeySimulator) Press(action string) error {
 	s.kb.HasCTRL(false)
 	if entry.ctrl {
 		s.kb.HasCTRL(true)
+	}
+	s.kb.HasALT(false)
+	if entry.alt {
+		s.kb.HasALT(true)
 	}
 	s.kb.SetKeys(entry.keys...)
 	if err := s.kb.Launching(); err != nil {
