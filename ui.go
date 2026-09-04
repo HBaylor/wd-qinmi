@@ -19,7 +19,7 @@ import (
 )
 
 // UI 持有所有 Fyne 控件与业务状态。
-// 与 executor 之间的回调全部经 fyne.Do 切回主线程，确保 Fyne 控件访问的线程安全。
+// Fyne 2.4 无 fyne.Do，回调从 goroutine 直接调用（Refresh 内部自带主线程同步）。
 type UI struct {
 	fyneApp fyne.App
 	win     fyne.Window
@@ -28,6 +28,8 @@ type UI struct {
 
 	actionsMu sync.Mutex
 	actions   []Action
+
+	logMu sync.Mutex
 
 	licensed  bool
 	machineID string
@@ -61,19 +63,21 @@ func NewUI(sim KeySimulator) *UI {
 	u.win.Resize(fyne.NewSize(420, 510))
 
 	// 自引用建立回调：在 Executor 触发回调时 *u 已经构造完成，访问字段是安全的。
+	// Fyne 2.4 无 fyne.Do，widget Refresh 内部经 runOnDraw 同步，可从 goroutine 直接调用。
 	u.exec = NewExecutor(sim, Callbacks{
 		OnLog: func(msg string, level LogLevel) {
-			fyne.Do(func() { u.appendLog(msg, level) })
+			u.appendLog(msg, level)
 		},
 		OnFinished: func(loops int) {
-			fyne.Do(func() { u.onExecutionFinished(loops) })
+			u.onExecutionFinished(loops)
 		},
 		OnStopped: func() {
-			fyne.Do(func() { u.onExecutionStopped() })
+			u.onExecutionStopped()
 		},
 	})
 
 	u.build()
+	u.initDefaultActions()
 	u.initLicense()
 	return u
 }
@@ -84,8 +88,8 @@ func (u *UI) Run() {
 }
 
 func (u *UI) build() {
-	// 顶部区域高度固定为 200px，限制两区不被拉伸
-	top := container.New(&fixedHeightLayout{height: 200},
+	// 顶部区域高度固定为 250px，限制两区不被拉伸
+	top := container.New(&fixedHeightLayout{height: 250},
 		container.NewGridWithColumns(
 			2,
 			u.buildPresetPanel(),
@@ -105,7 +109,7 @@ func (u *UI) build() {
 func bordered(obj fyne.CanvasObject) fyne.CanvasObject {
 	border := canvas.NewRectangle(color.Transparent)
 	border.StrokeWidth = 1
-	border.StrokeColor = theme.Color(theme.ColorNameInputBorder)
+	border.StrokeColor = theme.InputBorderColor()
 	return container.NewBorder(nil, nil, nil, nil, obj, border)
 }
 
@@ -176,10 +180,7 @@ func (u *UI) buildPresetPanel() fyne.CanvasObject {
 	}
 	grid := container.NewGridWithColumns(1, objs...)
 	card := widget.NewCard("", "", grid)
-	return bordered(container.NewThemeOverride(
-		container.NewVBox(redTitle("快捷按键区"), card),
-		newTinyTheme(),
-	))
+	return bordered(container.NewVBox(redTitle("快捷按键区"), card))
 }
 
 // ---------- 行为组合列表区 ----------
@@ -231,7 +232,7 @@ func (u *UI) buildFuncPanel() fyne.CanvasObject {
 	u.delayEntry.Validator = numericValidator()
 
 	u.loopsEntry = widget.NewEntry()
-	u.loopsEntry.SetText("1000")
+	u.loopsEntry.SetText("100000")
 	u.loopsEntry.Validator = numericValidator()
 
 	paramRow := container.NewVBox(
@@ -255,10 +256,7 @@ func (u *UI) buildFuncPanel() fyne.CanvasObject {
 	u.stopBtn.Disable()
 	u.startBtn.Disable() // 默认未授权，验证通过后解锁
 
-	bigBtnRow := container.NewGridWithColumns(2,
-		container.NewThemeOverride(u.startBtn, newBigButtonTheme()),
-		container.NewThemeOverride(u.stopBtn, newBigButtonTheme()),
-	)
+	bigBtnRow := container.NewGridWithColumns(2, u.startBtn, u.stopBtn)
 
 	statusRow := container.NewBorder(
 		nil, nil,
@@ -276,10 +274,10 @@ func (u *UI) buildFuncPanel() fyne.CanvasObject {
 	authEntry.Disable()
 	authEntry.SetText(getMachineID())
 	authCopyBtn := widget.NewButton("复制", func() {
-		u.fyneApp.Clipboard().SetContent(authEntry.Text)
+		u.win.Clipboard().SetContent(authEntry.Text)
 	})
 	authRow := container.NewBorder(nil, nil, nil,
-		fixedSize(container.NewThemeOverride(authCopyBtn, newBigButtonTheme()), 100, 24),
+		fixedSize(authCopyBtn, 100, 24),
 		fixedHeight(authEntry, 24))
 
 	u.licenseEntry = widget.NewEntry()
@@ -289,7 +287,7 @@ func (u *UI) buildFuncPanel() fyne.CanvasObject {
 	})
 	u.licenseBtn.Importance = widget.DangerImportance // 未授权默认红色
 	licenseRow := container.NewBorder(nil, nil, nil,
-		fixedSize(container.NewThemeOverride(u.licenseBtn, newBigButtonTheme()), 100, 24),
+		fixedSize(u.licenseBtn, 100, 24),
 		fixedHeight(u.licenseEntry, 24))
 
 	authPanel := bordered(container.NewVBox(redTitle("认证授权"), authRow, licenseRow))
@@ -312,6 +310,34 @@ func (u *UI) buildFuncPanel() fyne.CanvasObject {
 }
 
 // ---------- 授权控制 ----------
+
+// initDefaultActions 启动时预填默认行为序列：5 组「Ctrl+1 → Alt+Tab」加收尾 Ctrl+1
+func (u *UI) initDefaultActions() {
+	defaults := []string{"ctrl_1", "alt_tab", "ctrl_1", "alt_tab", "ctrl_1", "alt_tab", "ctrl_1", "alt_tab", "ctrl_1", "alt_tab", "ctrl_1"}
+	for _, v := range defaults {
+		text := v
+		for _, p := range []struct {
+			value string
+			text  string
+		}{
+			{"ctrl_1", "Ctrl+1"},
+			{"ctrl_2", "Ctrl+2"},
+			{"ctrl_3", "Ctrl+3"},
+			{"ctrl_tab", "Ctrl+Tab"},
+			{"alt_tab", "Alt+Tab"},
+			{"enter", "Enter"},
+			{"tab", "Tab"},
+		} {
+			if p.value == v {
+				text = p.text
+				break
+			}
+		}
+		u.actions = append(u.actions, Action{Value: v, Text: text})
+	}
+	u.actionList.Refresh()
+	u.updateCount()
+}
 
 // initLicense 启动时读取本机缓存授权码，命中则自动解锁
 func (u *UI) initLicense() {
@@ -479,6 +505,8 @@ func (u *UI) setStatus(msg string) {
 }
 
 func (u *UI) appendLog(msg string, level LogLevel) {
+	u.logMu.Lock()
+	defer u.logMu.Unlock()
 	var style widget.RichTextStyle
 	switch level {
 	case LogError:
